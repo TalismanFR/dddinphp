@@ -33,6 +33,8 @@
 ### [Стратегический обзор](https://github.com/TalismanFR/dddinphp/blob/master/ru-RU/Chapter1/Getting-Started-with-Domain-Driven-Design.md#%D1%81%D1%82%D1%80%D0%B0%D1%82%D0%B5%D0%B3%D0%B8%D1%87%D0%B5%D1%81%D0%BA%D0%B8%D0%B9-%D0%BE%D0%B1%D0%B7%D0%BE%D1%80)
 ### [Связанные механизмы: Микросервисы и автономные системы](https://github.com/TalismanFR/dddinphp/blob/master/ru-RU/Chapter1/Getting-Started-with-Domain-Driven-Design.md#%D1%81%D0%B2%D1%8F%D0%B7%D0%B0%D0%BD%D0%BD%D1%8B%D0%B5-%D0%BC%D0%B5%D1%85%D0%B0%D0%BD%D0%B8%D0%B7%D0%BC%D1%8B-%D0%BC%D0%B8%D0%BA%D1%80%D0%BE%D1%81%D0%B5%D1%80%D0%B2%D0%B8%D1%81%D1%8B-%D0%B8-%D0%B0%D0%B2%D1%82%D0%BE%D0%BD%D0%BE%D0%BC%D0%BD%D1%8B%D0%B5-%D1%81%D0%B8%D1%81%D1%82%D0%B5%D0%BC%D1%8B)
 ### [Резюмируем](https://github.com/TalismanFR/dddinphp/blob/master/ru-RU/Chapter1/Getting-Started-with-Domain-Driven-Design.md#%D1%80%D0%B5%D0%B7%D1%8E%D0%BC%D0%B8%D1%80%D1%83%D0%B5%D0%BC)
-## Глава 2. Архитектурные стили
-### Старые, добрые времена
-### Многоуровневая архитектура
+## [Глава 2. Архитектурные стили](https://github.com/TalismanFR/dddinphp/blob/master/ru-RU/Chapter2/Architectural-Styles.md#%D0%B3%D0%BB%D0%B0%D0%B2%D0%B0-2-%D0%B0%D1%80%D1%85%D0%B8%D1%82%D0%B5%D0%BA%D1%82%D1%83%D1%80%D0%BD%D1%8B%D0%B5-%D1%81%D1%82%D0%B8%D0%BB%D0%B8)
+### [Старые, добрые времена](https://github.com/TalismanFR/dddinphp/blob/master/ru-RU/Chapter2/Architectural-Styles.md#%D1%81%D1%82%D0%B0%D1%80%D1%8B%D0%B5-%D0%B4%D0%BE%D0%B1%D1%80%D1%8B%D0%B5-%D0%B2%D1%80%D0%B5%D0%BC%D0%B5%D0%BD%D0%B0)
+### [Многоуровневая архитектура (Layered Architecture)](https://github.com/TalismanFR/dddinphp/blob/master/ru-RU/Chapter2/Architectural-Styles.md#старые-добрые-времена)
+#### Пример Многоуровневой Архитектуры
+#### Инверския зависемостей. Гексогональная архитектура.
