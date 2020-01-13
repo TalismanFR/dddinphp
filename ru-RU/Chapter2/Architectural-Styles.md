@@ -570,26 +570,30 @@ CQRS стремится к еще более агрессивному Разде
 поступившей из событий.
 
 #### Модель записи
-Модель записи это владелец поведений Домена. Продолжая наш пример, интерфейс Репозитория будет упрощен
-до следующего:
+Модель записи является истиным владельцем поведения Домена. Продолжая
+наш пример, интерфейс репозитория будет урощен до следующего:
 ```php
+<?php
 interface PostRepository
 {
-    public function save(Post $post); 
+    public function save(Post $post);
     public function byId(PostId $id);
 }
 ```
-Теперь `PostRepository` освобожден от всех задач чтения, кроме одной: `byId` функции, которая отвечает
-за загрузку Агрегата по его ID, чтобы мы могли работать с ним. И как только это будет сделано, все методы 
-запросов (query) также будут удалены из модели `Post`, оставив только методы команд. Это означает, что
-мы эффективно избавимся от всех методов получения и любых других методов, предоставляющих информацию о 
-`Post Aggregate`. Вместо этого будут публиковаться События Домена, чтобы можно было запускать проекции
-Модели Записи, подписываясь на них:
+
+Теперь `PostRepository` освобожден от всех задач чтения, кроме одной: функция byId, которая
+отвечает за загрузку Агрегата по его ID, для дальнейшей работы с ним.
+Так же будут удалены все методы запросов (query) из модели `Post`, оставив только
+методы команд. Это приводит к тому, что мы избавляемся от всех методов
+получения данных и любых других методов, предоставляющих
+информацию о Агрегате Post. Вместо этого будут опубликоны Доменные События, чтобы запустить
+проекции Модели Записи использую подписку на них (события):
+
 ```php
+<?php
 class AggregateRoot
 {
     private $recordedEvents = [];
-
     protected function recordApplyAndPublishThat(
         DomainEvent $domainEvent
     ) {
@@ -597,23 +601,28 @@ class AggregateRoot
         $this->applyThat($domainEvent);
         $this->publishThat($domainEvent);
     }
+
     protected function recordThat(DomainEvent $domainEvent)
     {
         $this->recordedEvents[] = $domainEvent;
     }
+
     protected function applyThat(DomainEvent $domainEvent)
     {
         $modifier = 'apply' . get_class($domainEvent);
         $this->$modifier($domainEvent);
     }
+
     protected function publishThat(DomainEvent $domainEvent)
     {
         DomainEventPublisher::getInstance()->publish($domainEvent);
     }
+
     public function recordedEvents()
     {
         return $this->recordedEvents;
     }
+
     public function clearEvents()
     {
         $this->recordedEvents = [];
@@ -627,7 +636,6 @@ class Post extends AggregateRoot
     private $content;
     private $published = false;
     private $categories;
-
     private function __construct(PostId $id)
     {
         $this->id = $id;
@@ -649,18 +657,21 @@ class Post extends AggregateRoot
             new PostWasPublished($this->id)
         );
     }
+
     public function categorizeIn(CategoryId $categoryId)
     {
         $this->recordApplyAndPublishThat(
             new PostWasCategorized($this->id, $categoryId)
         );
     }
+
     public function changeContentFor($newContent)
     {
         $this->recordApplyAndPublishThat(
             new PostContentWasChanged($this->id, $newContent)
         );
     }
+
     public function changeTitleFor($newTitle)
     {
         $this->recordApplyAndPublishThat(
@@ -669,12 +680,16 @@ class Post extends AggregateRoot
     }
 }
 ```
-Все действия, которые инициируют измненение состояния, реализуются через События Домена.
-Для каждого опубликованного События Домена существует метод apply, отвечающий за отражение изменений состояния:
+
+Все действия, которые инициируют изменение состояния, реализуются
+через события Домена. Для каждого опубликованного Доменого События существует
+соотвествующий метод apply, отвечающий за отражение изменения состояния:
+
 ```php
+<?php
 class Post extends AggregateRoot
 {
-// ...
+    // ...
     protected function applyPostWasCreated(
         PostWasCreated $event
     ) {
@@ -682,41 +697,49 @@ class Post extends AggregateRoot
         $this->title = $event->title();
         $this->content = $event->content();
     }
+
     protected function applyPostWasPublished(
         PostWasPublished $event
     ) {
         $this->published = true;
     }
+
     protected function applyPostWasCategorized(
         PostWasCategorized $event
     ) {
         $this->categories->add($event->categoryId());
     }
+
     protected function applyPostContentWasChanged(
         PostContentWasChanged $event
     ) {
         $this->content = $event->content();
     }
+
     protected function applyPostTitleWasChanged(
         PostTitleWasChanged $event
     ) {
         $this->title = $event->title();
     }
 }
-
 ```
-#### Модель Чтения
-Модель Чтения, также известная как Модель Запросов (Query Model), является денормальзованной моделью данных,
-построенной согласно интересам Домена. Фактически, в CQRS все проблемы чтения считаются процессами отчётности, 
-инфраструктурной проблемой. Как правило, при использовании CQRS Модель Чтения зависит от потребностей 
-пользовательского интерфейса и сложности представлений, состовляющих пользовательский интерфейс.
-В ситуации, когда Модель Чтения определяется в терминах реляционных баз данных, простейшим подходом 
-было бы установить взаимно-однозначные (одик-к-одному) отношения междутаблицами базы данных и представлениями пользовательского
-интерфейса.
-Эти таблицы базы данных и представления пользовательского интерфейса будут обновлены с использованием проекций Модели Записи,
-инициированных опубликованными стороной записи Событиями Домена:
+
+#### Модель чтения
+
+Модель Чтения, так же известная как модель запросов (Query Model), является 
+денормализованной, в интересах Домена, моделью данных.
+Фактически, в CQRS все задачи чтения считаются процессами отчетности в 
+инфраструктурной задаче. Как правило, при использовании CQRS Модель Чтения зависит от 
+потребностей пользовательского интерфейса и сложности представлений, состовляющих
+пользовательский интерфейс. В ситуации, когда модель чтения определяется в терминах реляционных баз данных, 
+простейшим подходом было бы установить взаимно-однозначные отношения между
+таблицами базы данных и представлениями пользовательского интерфейса. Эти
+таблицы базы данных и представления пользовательского интерфейса будут
+обновлены с использованием проекций Модели Записи, инициированных событиями домена,
+ опубликованными стороной записи: 
+ 
 ```sql
--- Definition of a UI view of a single post with its comments
+-- Определение представляния UI для поста с его комментариями
 CREATE TABLE single_post_with_comments (
     id INTEGER NOT NULL,
     post_id INTEGER NOT NULL,
@@ -725,7 +748,8 @@ CREATE TABLE single_post_with_comments (
     post_created_at DATETIME NOT NULL,
     comment_content TEXT NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
--- Set up some data
+
+-- Вставка данных
 INSERT INTO single_post_with_comments VALUES
     (1, 1, "Layered" , "Some content", NOW(), "A comment"),
     (2, 1, "Layered" , "Some content", NOW(), "The comment"),
@@ -733,39 +757,46 @@ INSERT INTO single_post_with_comments VALUES
     (4, 2, "Hexagonal", "Some content", NOW(), "All comments"),
     (5, 3, "CQRS", "Some content", NOW(), "This comment"),
     (6, 3, "CQRS", "Some content", NOW(), "That comment");
--- Query it
+
+-- Запрос на получения данных статьи
 SELECT * FROM single_post_with_comments WHERE post_id = 1;
 ```
-Важной особенностью этого архитктурного стиля является то, что Модель Чтения должна быть одноразовой,
-поскольку истинное состояние приложения обрабатывается Модель Записи. Это означает, что Модель Чтения
-может быть удалено и воссоздано при необходимости с использованием проекций Модели Записи.
 
-Здесь мы можем увидеть некоторые примеры возможных представлений в нашем блоге:
+Важной особенностью этого архитектурного стиля является то, что
+ Модель Чтения должна быть полностью одноразовой, поскольку истинное состояние приложения 
+определяется Моделью Записи. Это означает что Модель Чтения может быть удалено
+и пересоздано при необходимости использую проекции Модели Записи.
+
+Ниже мы можеи увидеть некоторые примеры возможных представлений в преложении блога:
 ```sql
 SELECT * FROM
-    posts_grouped_by_month_and_year
+posts_grouped_by_month_and_year
 ORDER BY month DESC,year ASC;
 
 SELECT * FROM
-    posts_by_tags
+posts_by_tags
 WHERE tag = "ddd";
 
 SELECT * FROM
-    posts_by_author
+posts_by_author
 WHERE author_id = 1;
 ```
-Важно отметить, что CQRS не ограничивает определение и реализацию Модели Чтения для реляционной
-базы данных. Это зависит исключительно от потребностей создаваемого приложения.Это может быть
-реляционная база данных, документно-ориентированная база данных, хранилице типа ключ-значение
-или что-либо еще, что лучше всего соотвествует потребностям приложения. В дальнейшем, для нашего приложения
-блога мы будем использовать `Elasticsearch` - базу данных, ориентированную на документы - для реализации Модели Чтения:
+
+Важно отметить, что CQRS не ограничевается реализацией модели для реляционной
+базы данных. Это зависит исключительно от потребностей создаваемого приложения.
+Это может быть реляционная база данных, документно-ориентированная база данных, хранилище типа ключ-значение,
+или что-либо, что лучше всего соответствует потребностям вашего приложения. После приложения для публикации постов в блоге мы
+будет использовать `Elasticsearch` (базу данных, ориентированную на документы)
+ - для реализации модели чтения.
+ 
 ```php
+<?php
 class PostsController
 {
     public function listAction()
     {
         $client = new ElasticsearchClientBuilder::create()->build();
-        $response = $client-> search([
+        $response = $client->search([
             'index' => 'blog-engine',
             'type' => 'posts',
             'body' => [
@@ -780,11 +811,297 @@ class PostsController
     }
 }
 ```
-Код Модели Чтения был существенного упрощен до одного запроса к индексу `Elasticsearhc`.
 
-Это показывает, что модель чтения на самом деле не нуждается в объектно-реляционном преобразователе,
-поскольку это мжет быть излишним. Однако Модель Записи может выиграть от использования 
-Объектно-Релационного сопоставителя (mapper), поскольку это позволи вам организовать и структурировать модель чтения в
-соотвествии с потребностями приложения.
+Код Модели Чтения был существенно упрощен до одного запроса к индексу
+Elasticsearch.
+
+Этот код показывает, что Модель Чтения на самом деле не нуждается в
+объектно-реляционном преобразователе, посколько это может быть излишним.
+Однако Модель Записи может выиграть от использования объектно-реляционого
+преобразования, поскольку это позволит вам организовать и структурировать Модель Чтения
+в соответствии с потребностями приложения.
 
 #### Синхронизация Модели Записи с Моделью Чтения
+
+Здесь начинается сложная часть. Как мы синхронизируем Модель Чтения с 
+Моделью Записи? Мы уже говорили, что сделаем это с помощью Событий Домена,
+захваченных в тразакции Модели Записи. Для каждого типа захваченного События Домена
+будет выполнена соответствующая проекция. Таким образом, будет установлено 
+взаимно-однозначное отношение между Событиями Домена и проекциями.
+
+Давайте посмотрим на пример настройки проекций, для лучшего понимания идеи.
+Прежде всего, нам нужно определить каркас для проекций:
+
+```php
+<?php
+interface Projection
+{
+    public function listensTo();
+    public function project($event);
+}
+```
+
+Определение проекции `Elasticsearch` для события `PostWasCreated` достаточно просто:
+
+```php
+<?php
+namespace Infrastructure\Projection\Elasticsearch;
+use Elasticsearch\Client;
+use PostWasCreated;
+class PostWasCreatedProjection implements Projection
+{
+    private $client;
+    public function __construct(Client $client)
+    {
+        $this->client = $client;
+    }
+
+    public function listensTo()
+    {
+        return PostWasCreated::class;
+    }
+
+    public function project($event)
+    {
+        $this->client->index([
+        'index' => 'posts',
+        'type' => 'post',
+        'id' => $event->getPostId(),
+        'body' => [
+            'content' => $event->getPostContent(),
+                // ...
+            ]
+        ]);
+    }
+}
+```
+
+Реализация Проекции является своего рода специализированным слушателем
+Событий Домена. Основное различие между этой Проекций и слушателем Доменых Событий по умолчанию в том,
+что Проекция реагирует на группу Доменных Событий, а не только на одно.
+
+```php
+<?php
+namespace Infrastructure\Projection;
+class Projector
+{
+    private $projections = [];
+    public function register(array $projections)
+    {
+        foreach ($projections as $projection) {
+            $this->projections[$projection->eventType()] = $projection;
+        }
+    }
+
+    public function project( array $events)
+    {
+        foreach ($events as $event) {
+            if (isset($this->projections[get_class($event)])) {
+                $this->projections[get_class($event)]
+                    ->project($event);
+            }
+        }
+    }
+}
+```
+
+Следующий код показывает, как будет выглядеть поток между проекцией и событиями:
+
+```php
+<?php
+$client = new ElasticsearchClientBuilder::create()->build();
+
+$projector = new Projector();
+$projector->register([
+    new Infrastructure\Projection\Elasticsearch\
+    PostWasCreatedProjection($client),
+    new Infrastructure\Projection\Elasticsearch\
+    PostWasPublishedProjection($client),
+    new Infrastructure\Projection\Elasticsearch\
+    PostWasCategorizedProjection($client),
+    new Infrastructure\Projection\Elasticsearch\
+    PostContentWasChangedProjection($client),
+    new Infrastructure\Projection\Elasticsearch\
+    PostTitleWasChangedProjection($client),
+]);
+
+$events = [
+    new PostWasCreated(/* ... */),
+    new PostWasPublished(/* ... */),
+    new PostWasCategorized(/* ... */),
+    new PostContentWasChanged(/* ... */),
+    new PostTitleWasChanged(/* ... */),
+];
+
+$projector->project($event);
+```
+
+Этот код является своего рода синхронным, но процесс может быть и 
+асинхронным, если это необходимо. И вы могли бы информировать своих клиентов об этих
+не синхроннизированных данных, разместив несколько предупреждений в слое представления.
+
+В следующем примере мы будем использовать PHP-расширение amqplib в сочетании с 
+ReactPHP:
+
+```php
+<?php
+// Connect to an AMQP broker
+$cnn = new AMQPConnection();
+$cnn->connect();
+
+// Создание канала
+$ch = new AMQPChannel($cnn);
+
+// Declare a new exchange
+$ex = new AMQPExchange($ch);
+$ex->setName('events');
+$ex->declare();
+
+// Create an event loop
+$loop = ReactEventLoopFactory::create();
+
+// Создание поставщика, который будет отправлять
+// любые ожидающие сообщения каждые полсекунды
+$producer = new Gos\Component\React\AMQPProducer($ex, $loop, 0.5);
+$serializer = JMS\Serializer\SerializerBuilder::create()->build();
+$projector = new AsyncProjector($producer, $serializer);
+$events = [
+    new PostWasCreated(/* ... */),
+    new PostWasPublished(/* ... */),
+    new PostWasCategorized(/* ... */),
+    new PostContentWasChanged(/* ... */),
+    new PostTitleWasChanged(/* ... */),
+];
+$projector->project($event);
+```
+
+Чтобы это работало, нам нужен асинхронная проекция. Вот наивная реализация этого:
+
+```php
+<?php
+namespace Infrastructure\Projection;
+use Gos\Component\React\AMQPProducer;
+use JMS\Serializer\Serializer;
+class AsyncProjector
+{
+    private $producer;
+    private $serializer;
+    public function __construct(
+        Producer $producer,
+        Serializer $serializer
+    ) {
+        $this->producer = $producer;
+        $this->serializer = $serializer;
+    }
+    public function project(array $events)
+    {
+        foreach ($events as $event) {
+            $this->producer->publish(
+                $this->serializer->serialize(
+                    $event, 'json'
+                )
+            );
+        }
+    }
+}
+```
+
+И потребитель событий с использованием брокера RabbitMQ будет 
+выглядеть примерно так:
+
+```php
+<?php
+// Connect to an AMQP broker
+$cnn = new AMQPConnection();
+$cnn-> connect();
+
+// Create a channel
+$ch = new AMQPChannel($cnn);
+
+// Create a new queue
+$queue = new AMQPQueue($ch);
+$queue->setName('events');
+$queue->declare();
+
+// Create an event loop
+$loop = React\EventLoop\Factory::create();
+$serializer = JMS\Serializer\SerializerBuilder::create()->build();
+$client = new Elasticsearch\ClientBuilder::create()->build();
+
+$projector = new Projector();
+$projector->register([
+    new Infrastructure\Projection\Elasticsearch\
+    PostWasCreatedProjection($client),
+    new Infrastructure\Projection\Elasticsearch\
+    PostWasPublishedProjection($client),
+    new Infrastructure\Projection\Elasticsearch\
+    PostWasCategorizedProjection($client),
+    new Infrastructure\Projection\Elasticsearch\
+    PostContentWasChangedProjection($client),
+    new Infrastructure\Projection\Elasticsearch\
+    PostTitleWasChangedProjection($client),
+]);
+
+// Create a consumer
+$consumer = new Gos\Component\ReactAMQP\Consumer($queue, $loop, 0.5, 10);
+
+// Check for messages every half a second and consume up to 10 at a time.
+$consumer->on(
+    'consume',
+    function ($envelope, $queue) use ($projector, $serializer) {
+        $event = $serializer->unserialize($envelope->getBody(), 'json');
+        $projector->project($event);
+    }
+);
+$loop->run();
+```
+
+Отсюда все становится проще. Мы заставляем все репозитории использовать
+экземпляр проекции, а затем так же запускаем процесс проецирования:
+
+```php
+<?php
+class DoctrinePostRepository implements PostRepository
+{
+    private $em;
+    private $projector;
+    public function __construct(EntityManager $em, Projector $projector)
+    {
+        $this->em = $em;
+        $this->projector = $projector;
+    }
+
+    public function save(Post $post)
+    {
+        $this->em->transactional(
+            function (EntityManager $em) use ($post)
+            {
+                $em->persist($post);
+                foreach ($post->recordedEvents() as $event) {
+                    $em->persist($event);
+                }
+            }
+        );
+        $this->projector->project($post->recordedEvents());
+    }
+
+    public function byId(PostId $id)
+    {
+        return $this->em->find($id);
+    }
+}
+```
+
+Экземпляр `Post` и записанные события запускаются и сохраняются в одной транзакции. Это гарантирует, что никакие
+события не будут потеряны, так как мы спроецируем их на модель чтения, если транзакция прошла успешно. 
+В результате между Моделью Записи и Моделью чтения не будет никаких несоответствий.
+
+>**ORM или без ORM**
+>
+>Один из наиболее распространных вопросов при реализации CQRS - действительно ли нужен объектно-реляционный маппер
+> (ORM)? Мы твердо верим, что использование ORM для модели записи прекрасно и дает все преимущества использования
+>инструмента, который поможет нам сэкономить много работы в случае использования реляционной базы данных.
+>Но мы не должны забывать, что нам все еще нужно сохранять и извлекать состояние Модели Записи используя 
+>реляционную базу данных
+
+### Event Sourcing
