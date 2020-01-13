@@ -570,3 +570,221 @@ CQRS стремится к еще более агрессивному Разде
 поступившей из событий.
 
 #### Модель записи
+Модель записи это владелец поведений Домена. Продолжая наш пример, интерфейс Репозитория будет упрощен
+до следующего:
+```php
+interface PostRepository
+{
+    public function save(Post $post); 
+    public function byId(PostId $id);
+}
+```
+Теперь `PostRepository` освобожден от всех задач чтения, кроме одной: `byId` функции, которая отвечает
+за загрузку Агрегата по его ID, чтобы мы могли работать с ним. И как только это будет сделано, все методы 
+запросов (query) также будут удалены из модели `Post`, оставив только методы команд. Это означает, что
+мы эффективно избавимся от всех методов получения и любых других методов, предоставляющих информацию о 
+`Post Aggregate`. Вместо этого будут публиковаться События Домена, чтобы можно было запускать проекции
+Модели Записи, подписываясь на них:
+```php
+class AggregateRoot
+{
+    private $recordedEvents = [];
+
+    protected function recordApplyAndPublishThat(
+        DomainEvent $domainEvent
+    ) {
+        $this->recordThat($domainEvent);
+        $this->applyThat($domainEvent);
+        $this->publishThat($domainEvent);
+    }
+    protected function recordThat(DomainEvent $domainEvent)
+    {
+        $this->recordedEvents[] = $domainEvent;
+    }
+    protected function applyThat(DomainEvent $domainEvent)
+    {
+        $modifier = 'apply' . get_class($domainEvent);
+        $this->$modifier($domainEvent);
+    }
+    protected function publishThat(DomainEvent $domainEvent)
+    {
+        DomainEventPublisher::getInstance()->publish($domainEvent);
+    }
+    public function recordedEvents()
+    {
+        return $this->recordedEvents;
+    }
+    public function clearEvents()
+    {
+        $this->recordedEvents = [];
+    }
+}
+
+class Post extends AggregateRoot
+{
+    private $id;
+    private $title;
+    private $content;
+    private $published = false;
+    private $categories;
+
+    private function __construct(PostId $id)
+    {
+        $this->id = $id;
+        $this->categories = new Collection();
+    }
+
+    public static function writeNewFrom($title, $content)
+    {
+        $postId = PostId::create();
+        $post = new static($postId);
+        $post->recordApplyAndPublishThat(
+            new PostWasCreated($postId, $title, $content)
+        );
+    }
+
+    public function publish()
+    {
+        $this->recordApplyAndPublishThat(
+            new PostWasPublished($this->id)
+        );
+    }
+    public function categorizeIn(CategoryId $categoryId)
+    {
+        $this->recordApplyAndPublishThat(
+            new PostWasCategorized($this->id, $categoryId)
+        );
+    }
+    public function changeContentFor($newContent)
+    {
+        $this->recordApplyAndPublishThat(
+            new PostContentWasChanged($this->id, $newContent)
+        );
+    }
+    public function changeTitleFor($newTitle)
+    {
+        $this->recordApplyAndPublishThat(
+            new PostTitleWasChanged($this->id, $newTitle)
+        );
+    }
+}
+```
+Все действия, которые инициируют измненение состояния, реализуются через События Домена.
+Для каждого опубликованного События Домена существует метод apply, отвечающий за отражение изменений состояния:
+```php
+class Post extends AggregateRoot
+{
+// ...
+    protected function applyPostWasCreated(
+        PostWasCreated $event
+    ) {
+        $this->id = $event->id();
+        $this->title = $event->title();
+        $this->content = $event->content();
+    }
+    protected function applyPostWasPublished(
+        PostWasPublished $event
+    ) {
+        $this->published = true;
+    }
+    protected function applyPostWasCategorized(
+        PostWasCategorized $event
+    ) {
+        $this->categories->add($event->categoryId());
+    }
+    protected function applyPostContentWasChanged(
+        PostContentWasChanged $event
+    ) {
+        $this->content = $event->content();
+    }
+    protected function applyPostTitleWasChanged(
+        PostTitleWasChanged $event
+    ) {
+        $this->title = $event->title();
+    }
+}
+
+```
+#### Модель Чтения
+Модель Чтения, также известная как Модель Запросов (Query Model), является денормальзованной моделью данных,
+построенной согласно интересам Домена. Фактически, в CQRS все проблемы чтения считаются процессами отчётности, 
+инфраструктурной проблемой. Как правило, при использовании CQRS Модель Чтения зависит от потребностей 
+пользовательского интерфейса и сложности представлений, состовляющих пользовательский интерфейс.
+В ситуации, когда Модель Чтения определяется в терминах реляционных баз данных, простейшим подходом 
+было бы установить взаимно-однозначные (одик-к-одному) отношения междутаблицами базы данных и представлениями пользовательского
+интерфейса.
+Эти таблицы базы данных и представления пользовательского интерфейса будут обновлены с использованием проекций Модели Записи,
+инициированных опубликованными стороной записи Событиями Домена:
+```sql
+-- Definition of a UI view of a single post with its comments
+CREATE TABLE single_post_with_comments (
+    id INTEGER NOT NULL,
+    post_id INTEGER NOT NULL,
+    post_title VARCHAR(100) NOT NULL,
+    post_content TEXT NOT NULL,
+    post_created_at DATETIME NOT NULL,
+    comment_content TEXT NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- Set up some data
+INSERT INTO single_post_with_comments VALUES
+    (1, 1, "Layered" , "Some content", NOW(), "A comment"),
+    (2, 1, "Layered" , "Some content", NOW(), "The comment"),
+    (3, 2, "Hexagonal" , "Some content", NOW(), "No comment"),
+    (4, 2, "Hexagonal", "Some content", NOW(), "All comments"),
+    (5, 3, "CQRS", "Some content", NOW(), "This comment"),
+    (6, 3, "CQRS", "Some content", NOW(), "That comment");
+-- Query it
+SELECT * FROM single_post_with_comments WHERE post_id = 1;
+```
+Важной особенностью этого архитктурного стиля является то, что Модель Чтения должна быть одноразовой,
+поскольку истинное состояние приложения обрабатывается Модель Записи. Это означает, что Модель Чтения
+может быть удалено и воссоздано при необходимости с использованием проекций Модели Записи.
+
+Здесь мы можем увидеть некоторые примеры возможных представлений в нашем блоге:
+```sql
+SELECT * FROM
+    posts_grouped_by_month_and_year
+ORDER BY month DESC,year ASC;
+
+SELECT * FROM
+    posts_by_tags
+WHERE tag = "ddd";
+
+SELECT * FROM
+    posts_by_author
+WHERE author_id = 1;
+```
+Важно отметить, что CQRS не ограничивает определение и реализацию Модели Чтения для реляционной
+базы данных. Это зависит исключительно от потребностей создаваемого приложения.Это может быть
+реляционная база данных, документно-ориентированная база данных, хранилице типа ключ-значение
+или что-либо еще, что лучше всего соотвествует потребностям приложения. В дальнейшем, для нашего приложения
+блога мы будем использовать `Elasticsearch` - базу данных, ориентированную на документы - для реализации Модели Чтения:
+```php
+class PostsController
+{
+    public function listAction()
+    {
+        $client = new ElasticsearchClientBuilder::create()->build();
+        $response = $client-> search([
+            'index' => 'blog-engine',
+            'type' => 'posts',
+            'body' => [
+                'sort' => [
+                    'created_at' => ['order' => 'desc']
+                ]
+            ]
+        ]);
+        return [
+            'posts' => $response
+        ];
+    }
+}
+```
+Код Модели Чтения был существенного упрощен до одного запроса к индексу `Elasticsearhc`.
+
+Это показывает, что модель чтения на самом деле не нуждается в объектно-реляционном преобразователе,
+поскольку это мжет быть излишним. Однако Модель Записи может выиграть от использования 
+Объектно-Релационного сопоставителя (mapper), поскольку это позволи вам организовать и структурировать модель чтения в
+соотвествии с потребностями приложения.
+
+#### Синхронизация Модели Записи с Моделью Чтения
