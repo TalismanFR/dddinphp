@@ -1153,4 +1153,242 @@ class Post extends AggregateRoot implements EventSourcedAggregateRoot
     }
 }
 ```
+Теперь у Агрегата `Post` есть метод, который при заданном наборе событий (другими словами, потоке событий)
+может пошагово воспроизводить состояние до тех пор, пока оно не достигнет текущего.
+Следующим шагом будет создание адаптера порта для `PostRepository`, который будет извлекать все
+опубликованные события из Агрегата `Post` и добавлять их в хранилище данных, куда добавляются
+все событий. Это то что мы называем хранищем событий (event store).
 
+```php
+class EventStorePostRepository implements PostRepository
+{
+    private $eventStore;
+    private $projector;
+
+    public function __construct($eventStore, $projector)
+    {
+        $this->eventStore = $eventStore;
+        $this->projector = $projector;
+    }
+
+    public function save(Post $post)
+    {
+        $events = $post->recordedEvents();
+        $this->eventStore->append(new EventStream(
+            $post->id(),
+            $events)
+        );
+        $post->clearEvents();
+        $this->projector->project($events);
+    }
+}
+```
+
+Так выглядит реализация `PostRepository`, когда мы используем хранилище событий для сохранения
+всех событий, опубликованных Агрегатом `Post`. Теперь нам нужен способ восстановать Агрегат из его истории событий.
+Метод востановления, реализуется Агрегатом `Post` и используется для восстановления состояния сообщения в блоге из 
+инициированных событий:
+```php
+class EventStorePostRepository implements PostRepository
+{
+    public function byId(PostId $id)
+    {
+        return Post::reconstitute(
+            $this->eventStore->getEventsFor($id)
+        );
+    }
+}
+```
+Хранилище событий это рабочая лошадка, которая несет на себе всю ответственность за сохранение
+и восстановление потоков событий. Его публичный API состоит из двух простых методов:
+`append` и `getEventsFrom`. Первый добавляет поток событий в хранилище событий, а второй получает потоки
+событий, чтобы запусть построение Агрегата.
+
+Мы могли бы использовать key-value хранилище для реализаци хранения всех событий:
+```php
+class EventStore
+{
+    private $redis;
+    private $serializer;
+
+    public function __construct($redis, $serializer)
+    {
+        $this->redis = $redis;
+        $this->serializer = $serializer;
+    }
+
+    public function append(EventStream $eventstream)
+    {
+        foreach ($eventstream as $event) {
+            $data = $this->serializer->serialize(
+                $event, 'json'
+            );
+            $date = (new DateTimeImmutable())->format('YmdHis');
+            $this->redis->rpush(
+                'events:' . $event->getAggregateId(),
+                $this->serializer->serialize([
+                    'type' => get_class($event),
+                    'created_on' => $date,
+                    'data' => $data
+                ],'json')
+            );
+        }
+    }
+
+    public function getEventsFor($id)
+    {
+        $serializedEvents = $this->redis->lrange('events:' . $id, 0, -1);
+        $eventStream = [];
+        foreach($serializedEvents as $serializedEvent){
+            $eventData = $this->serializer->deserialize(
+                $serializedEvent,
+                'array',
+                'json'
+            );
+            $eventStream[] = $this->serializer->deserialize(
+                $eventData['data'],
+                $eventData['type'],
+                'json'
+            );
+        }
+
+        return new EventStream($id, $eventStream);
+    }
+}
+```
+Эта реализация хранилища событий основана на Redis, широко используемом key-value хранилище.
+События добавляются в список с использованием префиксных событий: помимо этого, перед сохранением событий
+мы извлекаем некоторые метаданные, такие как класс события или дата создания, это может пригодиться позже.
+
+Очевидно, что с точки зрения производительности, Агрегату очень затратно обходить всю историю событий, чтобы постоянно
+находиться в актуальном состоянии. Это особенно заметно, когда поток событий содержи сотни или тысячи событий.
+
+Лучший способ преодолеть эту ситуацию - это сделать снимок Агрегата (snapshot) и воспроизвести только 
+те события в потоке событий, которые произошли после создания снимка. 
+Снимок - это просто сериализованная версия состояния Агрегата, преимуществено основанный на времени. При одном подходе, снимок делается
+каждые n запущенный событий. При другом подходе снимок делается каждые n секунд.
+
+Следуя нашему примеру, мы будем использовать первый способ создания снимков. В метаданных события мы 
+храним даполнительное поле, версию, с которой мы начнем вопроизводить историю Агрегата.
+
+```php
+class SnapshotRepository
+{
+    public function byId($id)
+    {
+        $key = 'snapshots:' . $id;
+        $metadata = $this->serializer->unserialize(
+            $this->redis->get($key)
+        );
+        if (null === $metadata) {
+            return;
+        }
+
+        return new Snapshot(
+            $metadata['version'],
+            $this->serializer->unserialize(
+                $metadata['snapshot']['data'],
+                $metadata['snapshot']['type'],
+                'json'
+            )
+        );
+    }
+
+    public function save($id, Snapshot $snapshot)
+    {
+        $key = 'snapshots:' . $id;
+        $aggregate = $snapshot->aggregate();
+        $snapshot = [
+            'version' => $snapshot->version(),
+            'snapshot' => [
+                'type' => get_class($aggregate),
+                'data' => $this->serializer->serialize(
+                    $aggregate, 'json'
+                )
+            ]
+        ];
+
+        $this->redis->set($key, $snapshot);
+    }
+}
+```
+Теперь нам необходимо провести рефакторинг класса `EventStore`, чтобы он начал использовать
+`SnapshotRepository` для загрузки Агрегата с допустимыми временными затратами.
+```php
+class EventStorePostRepository implements PostRepository
+{
+    public function byId(PostId $id)
+    {
+        $snapshot = $this->snapshotRepository->byId($id);
+        if (null === $snapshot) {
+            return Post::reconstitute(
+                $this->eventStore->getEventsFrom($id)
+            );
+        }
+
+        $post = $snapshot->aggregate();
+        $post->replay(
+            $this->eventStore->fromVersion($id, $snapshot->version())
+        );
+
+        return $post;
+    }
+}
+```
+Нам просто нужно периодически делать снимки Агрегата. Мы можем делать это синхронно или асинхронно
+с помощью процесса, отвечающего за мониторинг хранилища событий. Следующий код представляет собой простой пример,
+демонстрирующий реализацию процесса создания снимка Агрегата:
+```php
+class EventStorePostRepository implements PostRepository
+{
+    public function save(Post $post)
+    {
+        $id = $post->id();
+        $events = $post->recordedEvents();
+        $post->clearEvents();
+        $this->eventStore->append(new EventStream($id, $events));
+        $countOfEvents =$this->eventStore->countEventsFor($id);
+        $version = $countOfEvents / 100;
+    
+        if (!$this->snapshotRepository->has($post->id(), $version)) {
+            $this->snapshotRepository->save(
+                $id,
+                new Snapshot(
+                    $post, $version
+                )
+            );
+        }
+
+        $this->projector->project($events);
+    }
+}
+```
+>***ORM или без ORM***
+>Из представленного варианта использования архитектурного стиля ясно, что использование ORM только для
+>сохранения/извлечения событий было бы излишним. Даже если мы используем реляционную базу данных для их хранения,
+>нам нужно только сохранять/извлекать события из хранилища данных.
+
+## Резюмируем
+Поскольку существует множество вариантов архитектурных стилей, возможно, вы немного запутались в этой главе.
+Чтобы сделать выбор вы должны рассмотреть компромиссы для каждого из них.
+Ясно одно: подход Большой Комок Грязи - не вариант, так как код будет 
+очень быстро "портиться". Многоуровневая Архитектура является лучшим вариантом, но
+она имеет некоторые недостатки,такие как тесная связь между слоями.
+Можно утверждать, что наиболее сбалансированным вариантом будет Гексогональная
+Архитектура, поскольку она может использоваться в качестве базовой архитектуры и обеспечивает
+высокую степень развязки и симметрии между внетренней и внешней частью приложения. Это то, что мы рекомендуем
+для большинства сценариев.
+
+Мы также рассматриваем CQRS и EventSourcing как относительно гибкие архитектуры,
+которые помогут вам в борьбе с высокой сложностью проекта.
+CQRS и EventSourcing являются мощными подходами, но не позволяйте фактору 
+крутости отвлекать вас от ценности, которую они предоставляют. 
+Поскольку они оба идут некоторыми накладными расходами, у вас должна быть техническая 
+причина для оправдания использования этих подходов. Эти архитектурыне стили
+действительно очень полезны, и эвристически узнать необходимость применения можно посчитав количество
+заявителей в репозиториев CQRS и количеству инициированных событий для 
+EventSourcing. Если число методов поиска начинает расти. а хранилища становятся
+сложными в обслуживании, то пришло время рассмотреть вопрос об использовании CQRS,
+чтобы разделить задачи чтения и записи. И после этого, если объем событий в каждом
+Агрегате имеет тенденции к росту, и бизнес заинтересован в более детальной информации,
+то можно подумать о том, может ли окупиться переход на EventSourcing.
