@@ -649,4 +649,89 @@ firing the Event as many times as the Aggregate is fetched from the database.
 которая наследуется от Сущности `Product` и может востанавливать Сущность из базы данных без использования
 оператора `new`, а вместо этого использовать статические методы фабрики.
 
-### Embedded Value (Embeddables) with Doctrine >= 2.5.* 
+### Embedded Value (Embeddables) с использованием Doctrine >= 2.5.* 
+Последним стабильной версией Doctrine на момент написания книги является 2.5, и она поставляется
+с поддержкой сопоставления Объектов Значения, что устраняет необходимость делать это
+самостоятельно, как в Doctrine 2.4. С декабря 2015, Doctrine также поддерживает сложенные встраиваемые объекты.
+
+Поскольку классы `Product`, `Money` и `Currency` уже показаны, остается только показать файл настройки
+сопоставления Doctrine:
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<doctrine-mapping
+    xmlns="http://doctrine-project.org/schemas/orm/doctrine-mapping"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://doctrine-project.org/schemas/orm/doctrine-mapping https://raw.github.com/doctrine/doctrine2/master/doctrine-mapping.xsd">
+    <entity
+        name="Product"
+        table="product">
+        <id
+            name="id"
+            column="id"
+            type="string"
+            length="255">
+            <generator strategy="NONE">
+            </generator>
+        </id>
+        <field
+            name="name"
+            type="string"
+            length="255"
+        />
+        <embedded
+            name="price"
+            class="Ddd\Domain\Model\Money"
+        />
+    </entity>
+</doctrine-mapping>
+```
+В сопоставлении продукта мы определяем цену как переменную экземпляра класса `Money`.
+В то же время, `Money` спроектирован с реализацией класса `Currency`:
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<doctrine-mapping
+    xmlns="http://doctrine-project.org/schemas/orm/doctrine-mapping"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="
+        http://doctrine-project.org/schemas/orm/doctrine-mapping
+    https://raw.github.com/doctrine/doctrine2/master/doctrine-mapping.xsd">
+    <embeddable
+        name="Ddd\Domain\Model\Money">
+        <field
+            name="amount"
+            type="integer"
+        />
+        <embedded
+            name="currency"
+            class="Ddd\Domain\Model\Currency"
+        />
+    </embeddable>
+</doctrine-mapping>
+```                  
+Наконец, пришло время показать конфигурацию сопоставления для нашего Объекта Значения `Currency`:
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<doctrine-mapping
+    xmlns="http://doctrine-project.org/schemas/orm/doctrine-mapping"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="
+        http://doctrine-project.org/schemas/orm/doctrine-mapping
+        https://raw.github.com/doctrine/doctrine2/master/doctrine-mapping.xsd">
+    <embeddable
+        name="Ddd\Domain\Model\Currency">
+        <field
+            name="iso"
+            type="string"
+            length="3"
+        />
+    </embeddable>
+</doctrine-mapping>
+```
+Как видите, приведенный выше код имеет стандартное встраиваемое определение с одним строковым полем,
+содержащим код ISO. Этот подход является самым простым способом использования встраиваемых объектов и 
+гораздо эффективнее. По умолчанию, Doctrine присваиваем имена вашим столбцам, добавляя к ним префикс, используя имя
+Объекта Значения. Вы можете изменить это поведение в соответствии с вашими потребностями, отредактировав
+атрибут `column-prefix` в xml нотации.
+
+## Serialized LOB и специальная ORM
