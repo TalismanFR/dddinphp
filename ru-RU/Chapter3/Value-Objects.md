@@ -540,3 +540,113 @@ $productRepository−>persist(product);
 >большинстве случаев при работе с Сущностями и безнес-логикой. Это сэкономит вам много времени и нервов.
 
 ## Сохранение Простого Объекта Значения.
+Для сохранения одного Объекта Значения доступно множество опций. 
+Они варьируются от использования Serialize LOB или Embedded Value в качестве стратегии сопоставления, до использования
+специального ORM или альтернативы с открытым исходных кодом, такой как Doctrine.
+Под специальной ORM мы подразумеваем пользовательскую ORM, разработанная вашей компанией для сохранения Сущностей
+в базу данных. В нашем сценарии специальный ORM код будет реализован с использованием библиотеки
+[DBAL](https://www.doctrine-project.org/projects/doctrine-dbal/en/latest/).
+Согласно [официальной документации](https://www.doctrine-project.org/projects/doctrine-dbal/en/latest/reference/introduction.html) The Doctrine Database Abstraction & Access Layer (DBAL) предлагает 
+легкий и тонкий runtime слой вокруг PDO-подобного API и множество дополнительных горизонтальный функций,
+самоанализ схемы базы данных и манипулирование через OO API.
+
+### Embedded Value (Встроеное Значение) с помощью специальной ORM
+Если мы имеем дело со специальной ORM, использущей шаблон Embedded Value, нам нужно создать поле
+в таблице Entity для каждого атрибута Объекта Значения. В этом случае для сохранения Сущности
+`Product` требуется два дополнительных столбца - один для стоимости, второй для кода валюты.
+
+```sql
+CREATE TABLE `products` (
+    id INT NOT NULL,
+    name VARCHAR( 255) NOT NULL,
+    price_amount INT NOT NULL,
+    price_currency VARCHAR( 3) NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```   
+Если вы используется специальный репозиторий ORM на основе DBAL, назовем его `DbalProductRepository` - 
+вы должны позаботиться о создании оператора `INSERT`, привязки параметров и выполнении этого метода.
+
+```php
+class DbalProductRepository extends DbalRepository implements ProductRepository
+{
+    public function add(Product $aProduct)
+    {
+        $sql = 'INSERT INTO products VALUES (?, ?, ?, ?)' ;
+        $stmt = $this->connection()->prepare($sql);
+        $stmt->bindValue(1, $aProduct->id());
+        $stmt->bindValue(2, $aProduct->name());
+        $stmt->bindValue(3, $aProduct->price()->amount());
+        $stmt->bindValue(4, $aProduct
+                        ->price()->currency()->isoCode());
+        $stmt->execute();
+        // ...
+    }
+}
+
+```  
+После выполнения этого фрагмента кода для создания Сущностей `Product` и сохранения их, каждый столбец
+заполняется необходимой информацией:
+```sql
+mysql> select * from products \G
+*************************** 1. row ***************************
+id: 1
+name: Domain-Driven Design in PHP
+price_amount: 999
+price_currency: USD
+1 row in set (0.00 sec)
+```
+Как видите, вы можете сопоставить свои Объекты Значений с параметрами запроса, чтобы сохранить ваши
+Объекты Значения в базе данных. Однако, не все так просто, как кажется. Попробуем извлечь сохраненный продукт с 
+с соотвествующим Объектом Значения `Money`. Обычно подход заключается в выполнении оператора `SELECT` и 
+возврате новой Сущности:
+```php
+class DbalProductRepository extends DbalRepository implements ProductRepository
+{
+    public function productOfId($anId)
+    {
+        $sql = 'SELECT * FROM products WHERE id = ?';
+        $stmt = $this->connection()->prepare($sql);
+        $stmt->bindValue(1, $anId);
+        $res = $stmt->execute();
+        // ...
+        return new Product(
+            $row['id'],
+            $row['name'],
+            new Money(
+                $row['price_amount'],
+                new Currency($row['price_currency'])
+            )
+        );
+    }
+}
+
+``` 
+У этого подхода есть некоторые преимущества. Во-первых, вы можете легко прочитать, шаг за шагом,
+каждый необходимый элемент. Во-вторых, вы можете выполнять запросы на основе любых атрибутов Объекта Значения.
+Наконец, ваша Сущности будет занимать в базе ровно столько места, сколько ей требуется - не больше и не меньше.
+
+//todo
+However, using the ad hoc ORM approach has its drawbacks. As explained in the Chapter
+6, Domain-Events, Entities (in Aggregate form) should fire an Event in the constructor if
+your Domain is interested in the Aggregate's creation. If you use the new operator, you'll be
+firing the Event as many times as the Aggregate is fetched from the database.
+
+Это одна из причин, Doctrine использует внутренние прокси, а так же сериализуещие и 
+десериализуещие методы для востановления объекта с его атрибутами в определенном состоянии без использования его
+конструктора. Сущность должна быть создана с новым оператором только один раз за время своего существования:
+
+> **Конструкторы**
+> В конструкторы не обязательно помещать параметры для каждого атрибута объекта. Подумайте о посте в блоге.
+> Конструктор может нуждаться в идентификаторе и заголовке; однако, внутри он может так же установить свой атрибут `status`
+> значение _Черновик_. При публикации поста необходимо вызвать метод публикации, чтобы 
+> соответствующим образом изменить его статус и установить дату публикации.
+
+Если вы все еще хотите создать свой ORM, будьте готовы решить некоторые фундаментальные проблемы, такие как
+События, различные конструкторы, Объекты Значений, отложенная загрузка и другие. Вот почему мы рекомендуем
+попробовать Doctrine для приложений реализующих DDD.
+
+Кроме того, в этом случае вам необходимо создать Сущность `DbalProduct`, 
+которая наследуется от Сущности `Product` и может востанавливать Сущность из базы данных без использования
+оператора `new`, а вместо этого использовать статические методы фабрики.
+
+### Embedded Value (Embeddables) with Doctrine >= 2.5.* 
