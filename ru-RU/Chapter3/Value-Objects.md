@@ -735,3 +735,68 @@ firing the Event as many times as the Aggregate is fetched from the database.
 атрибут `column-prefix` в xml нотации.
 
 ## Serialized LOB и специальная ORM
+Если поиск по атрибутам Объекта Значения не нужно, можно рассмотреть
+еще один шаблон: the Serialize LOB (Сериализованный Большой Объект).
+Этот шаблон работает путем сериализации всего Объекта Значения в строковый
+формат, который можно легко сохранить и извлечь. Наиболее существенное
+различие между этим решением и альтернативой встраивания объекта заключается в том,
+что в последнем варианте весь объект занимает лиш одну колонку в таблице.
+
+```sql
+CREATE TABLE ` products` (
+    id INT NOT NULL,
+    name VARCHAR( 255) NOT NULL,
+    price TEXT NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+Для сохранения Сущности `Product` при использовании этого подхода,
+требуется изменение в `DbalProductRepository`. Объект Значение
+`Money` должно быть сереализовано в строку перед сохранением Сущности.
+
+```php
+class DbalProductRepository extends DbalRepository implements ProductRepository
+{
+    public function add(Product $aProduct)
+    {
+        $sql = 'INSERT INTO products VALUES (?, ?, ?)';
+        $stmt = this->connection()->prepare(sql); 
+        $stmt->bindValue(1, aProduct−>id()); 
+        $stmt->bindValue(2, aProduct−>name()); 
+        $stmt->bindValue(3, $this−>serialize($aProduct->price()));
+        // ...
+    }
+    private function serialize($object)
+    {
+        return serialize($object);
+    }
+}
+```
+Теперь посмотрим, как наш `Product` представлен в базе данных.
+Тип столбца `price` TEXT, в ней хранится сериализованный объект `Money`,
+представлющий 9.99USD
+```sql
+mysql > select * from products \G
+*************************** 1.row***************************
+id : 1
+name : Domain-Driven Design in PHP
+price : O:22:"Ddd\Domain\Model\Money":2:{s:30:"Ddd\Domain\Model\\
+Money amount";i :
+999;s:32:"Ddd\Domain\Model\Money currency";O : 25:"Ddd\Domain\Model\\
+Currency":1:{\
+s:34:" Ddd\Domain\Model\Currency isoCode";s:3:"USD";}}1 row in set(\ 0.00
+sec)
+```
+Этот подход работает. Однако он не рекомендуется из-за проблем,
+возникающих при рефакторинге классов в вашем коде. Можете ли вы
+представить проблемы с которыми столкнемся, если решим переименовать
+наш класс `Money`? А какие изменения потребуются в базе данных при перемещении
+класс `Money` в другое пространство имен? Другой сложностью, как говорилось ранее,
+является отсутствие возможности запроса по атрибутам Объекта Значения.
+Неважно, используете вы Doctrine или нет; написать запрос, чтобы
+получить продукты дешевле, скажем, 200 долларов, практически невозможно.
+
+Проблема запроса по атрибутам Объекта Значения может быть решена только
+при подходе Embedded Values. Однако проблемы рефакторинга могут быть
+решены с помощью специальной библиотеки для процессов сериализации.
+
+### Улучшенная сериализация с помощью JMS Serialize
