@@ -926,3 +926,107 @@ class Ddd\Domain\Model\Product#177 (3) {
 Тип `object` при сериализации используется такая информация как класс объекта, что затрудняет безопасный рефакторинг.
 
 Давайте попробуем улучшить это решение. Подумаем о собственном процессе сериализации, который может устранить проблему.
+
+Одним из таких способов может быть сохранение Объекта Значения `Money` в базе данных в виде строки, закодированной в форматы amount|isoCode.
+```php
+use Ddd\Domain\Model\Currency;
+use Ddd\Domain\Model\Money;
+use Doctrine\DBAL\Types\TextType;
+use Doctrine\DBAL\Platforms\AbstractPlatform;
+
+class MoneyType extends TextType
+{
+    const MONEY = 'money';
+    public function convertToPHPValue(
+        $value,
+        AbstractPlatform $platform
+    ) {
+        $value = parent::convertToPHPValue($value, $platform);
+        $value = explode('|', $value);
+        return new Money(
+            $value[0],
+            new Currency($value[1])
+        );
+    }
+
+    public function convertToDatabaseValue(
+        $value,
+        AbstractPlatform $platform
+    ) {
+        return implode(
+            '|',
+            [
+                $value->amount(),
+                $value->currency()->isoCode()
+            ]
+        );
+    }
+    public function getName()
+    {
+        return self::MONEY;
+    }
+}
+```
+Используя Doctrine, вам необходимо зарегистрироваться все пользовательские типы. Обычно для этого
+используется фабрика `EntityManagerFactory` которая пораждает `EntityManager`.
+
+Кроме того, вы можете выполнить этот шаг на этапе загрузки приложения:
+```php
+use Doctrine\DBAL\Types\Type;
+use Doctrine\ORM\EntityManager;
+use Doctrine\ORM\Tools\Setup;
+class EntityManagerFactory
+{
+    public function build()
+    {
+        Type::addType(
+            'money',
+            'Ddd\Infrastructure\Persistence\Doctrine\Type\MoneyType'
+        );
+
+        return EntityManager::create(
+            [
+                'driver' => 'pdo_mysql',
+                'user' => 'root',
+                'password' => '',
+                'dbname' => 'ddd',
+            ],
+            Setup::createXMLMetadataConfiguration(
+                [__DIR__.'/config'],
+                true
+            )
+        );
+    }
+}
+```
+Теперь нам нужно указать в настройках сопоставления, что мы хотим использовать наш пользовательский тип:
+```xml
+<?xml version = "1.0" encoding = "utf-8"?>
+<doctrine-mapping>
+    <entity
+        name = "Product"
+        table = "product">
+
+        <!-- ... -->
+        <field
+            name = "price"
+            type = "money"
+        />
+    </entity>
+</doctrine-mapping>
+```
+Давайте проверим базу данных чтобы увидеть как сохраняется `Money` в этом случае.
+```mysql
+mysql> select * from products \G
+*************************** 1. row***************************
+id: 1
+name: Domain-Driven Design in PHP
+price: 999|USD
+1 row in set (0.00 sec)
+```
+Этот подход явно лучше про сравнению с предыдущим с точки зрения будущего рефаторинга.
+Однако возможности поиска по значения остаются ограниченными из-за формата столбца.
+С помощью пользовательских типов Doctrine вы можете немного улучшить ситуацию, но это 
+все еще не лучший вариантов для построения DQL запросов. С дополнительной информацией можете
+ознакомиться на странице [Custom Mapping Types](https://www.doctrine-project.org/projects/doctrine-orm/en/2.7/cookbook/custom-mapping-types.html#custom-mapping-types)
+
