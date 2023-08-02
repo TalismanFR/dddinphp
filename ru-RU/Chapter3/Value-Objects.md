@@ -625,13 +625,12 @@ class DbalProductRepository extends DbalRepository implements ProductRepository
 каждый необходимый элемент. Во-вторых, вы можете выполнять запросы на основе любых атрибутов Объекта Значения.
 Наконец, ваша Сущности будет занимать в базе ровно столько места, сколько ей требуется - не больше и не меньше.
 
-//todo
-However, using the ad hoc ORM approach has its drawbacks. As explained in the Chapter
-6, Domain-Events, Entities (in Aggregate form) should fire an Event in the constructor if
-your Domain is interested in the Aggregate's creation. If you use the new operator, you'll be
-firing the Event as many times as the Aggregate is fetched from the database.
+Однако использование собственно-написанной ORM имеет свои недостатки. Как объясняется в главе 6 "События домена",
+сущности (в представлении агрегата) должны вызывать событие в конструкторе, если ваш домен занят созданием агрегата.
+Если использовать оператор `new`, то событие будет вызываться столько раз, сколько раз агрегат будет получен 
+из базы данных.
 
-Это одна из причин, Doctrine использует внутренние прокси, а так же сериализуещие и 
+Это одна из причин почему Doctrine использует внутренние прокси, а так же сериализуещие и 
 десериализуещие методы для востановления объекта с его атрибутами в определенном состоянии без использования его
 конструктора. Сущность должна быть создана с новым оператором только один раз за время своего существования:
 
